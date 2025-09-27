@@ -1,3 +1,5 @@
+from replay_buffer import ReplayBuffer
+
 class DDPGTrainer:
     '''Facilitates the training of a DDPG pipeline for financial portfolio
     optimization, focusing on optimizing the actor network (decision-making)
