@@ -1,3 +1,12 @@
+from rl_evaluator import RLEvaluator
+from rl_dataloader import RLDataLoader
+import pandas as pd
+import torch
+import torch.nn as nn
+from copy import deepcopy
+from early_stopper import EarlyStopper
+from replay_buffer import ReplayBuffer
+
 
 class DeepQLearningTrainer:
     '''Facilitates the training of a Deep Q-Learning model for financial portfolio
@@ -66,6 +75,7 @@ class DeepQLearningTrainer:
         self.number_of_assets = number_of_assets
         self.actor = actor
         self.critic = critic
+        self.target_critic = deepcopy(critic) ## added
         self.l1_lambda = l1_lambda
         self.l2_lambda = l2_lambda
         self.soft_update = soft_update
@@ -74,6 +84,7 @@ class DeepQLearningTrainer:
         self.gamma = gamma
         self.early_stopper = EarlyStopper(patience, min_delta) if early_stopping else None
         self.num_action_samples = num_action_samples
+        self._soft_update(self.target_critic, self.critic, tau=1.0) ## added
 
         # Optimizers
         self.actor_optimizer = optimizer(
@@ -123,6 +134,12 @@ class DeepQLearningTrainer:
         '''        
         replay_buffer = ReplayBuffer()
 
+        print(
+                "n_assets:", self.number_of_assets,
+                "actor_input_size:", self.actor.input_size,
+                "inferred_lookback:", self.actor.input_size // self.number_of_assets
+)
+
         for epoch in range(num_epochs):
             total_actor_loss = 0
             total_critic_loss = 0
@@ -130,6 +147,8 @@ class DeepQLearningTrainer:
             for state, next_state in train_loader:
 
                 # Compute current portfolio allocation and Q-value
+                assert state.numel() == self.actor.input_size, \
+                    f"Actor input_size={self.actor.input_size}, but got state of size {state.numel()}."
                 portfolio_allocation = self.actor(state.flatten())
                 exploration_noise = torch.normal(0, noise, portfolio_allocation.shape)
                 noisy_portfolio_allocation = portfolio_allocation + exploration_noise
@@ -257,10 +276,19 @@ class DeepQLearningTrainer:
                     avg_val_critic_loss = val_critic_loss / len(val_loader)
 
                 if verbose > 0:
-                    print(f'Epoch {epoch+1}/{num_epochs}, Actor Loss: {avg_actor_loss:.10f}, Critic Loss: {avg_critic_loss:.10f}, Val Critic Loss: {avg_val_critic_loss:.10f}')
+                    print(f'Epoch {epoch+1}/{num_epochs}, '
+                          f'Actor Loss org: {avg_actor_loss:.10f},' 
+                          f"Actor Loss: {float(avg_actor_loss):.6f}, "
+                          f'Critic Loss org: {avg_critic_loss:.10f},' 
+                          f"Critic Loss: {float(avg_critic_loss):.6f}, "
+                          f'Val Critic Loss org: {avg_val_critic_loss:.10f}'
+                          f"Val Critic Loss: {float(avg_val_critic_loss):.6f}"
+                          )
 
                 if self.early_stopper.early_stop(avg_val_critic_loss, verbose=verbose):
                         break
+                if self.soft_update:
+                    self._soft_update(self.target_critic, self.critic, self.tau)
             else:
                 if verbose > 0:
                     print(f'Epoch {epoch+1}/{num_epochs}, Actor Loss: {avg_actor_loss:.10f}, Critic Loss: {avg_critic_loss:.10f}')

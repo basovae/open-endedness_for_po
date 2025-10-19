@@ -1,3 +1,10 @@
+from rl_evaluator import RLEvaluator
+from rl_dataloader import RLDataLoader
+import pandas as pd
+import torch
+import torch.nn as nn
+from copy import deepcopy
+from early_stopper import EarlyStopper
 from replay_buffer import ReplayBuffer
 
 class DDPGTrainer:
@@ -254,6 +261,8 @@ class DDPGTrainer:
 
                 if self.early_stopper.early_stop(avg_val_critic_loss, verbose=verbose):
                         break
+                if self.soft_update:
+                    self._soft_update(self.target_critic, self.critic, self.tau)
             else:
                 if verbose > 0:
                     print(f'Epoch {epoch+1}/{num_epochs}, Actor Loss: {avg_actor_loss:.10f}, Critic Loss: {avg_critic_loss:.10f}')

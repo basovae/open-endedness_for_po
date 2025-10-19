@@ -1,3 +1,12 @@
+import torch
+import torch.nn as nn
+import pandas as pd
+from utility_functions import reduce_negatives, calculate_test_performance, arima_forecast
+import numpy as np
+from tqdm import tqdm as progress_bar
+
+
+
 class RLEvaluator:
     '''Class to evaluate a PyTorch Actor model using SPO and DPO strategies.
 
@@ -18,9 +27,12 @@ class RLEvaluator:
         self.actor = actor
         self.train_data = train_data
         self.test_data = test_data
-        self.window_size = int(actor.input_size / len(tickers)) - forecast_size
         self.forecast_size = forecast_size
         self.reduce_negatives = reduce_negatives
+        self.tickers = list(self.test_data.columns)
+        self.window_size = len(self.train_data) 
+        self.window_size = int(actor.input_size / len(self.tickers)) - forecast_size
+
 
     def evaluate_spo(self, verbose: int = 0) -> tuple:
         '''Evaluate using Static Portfolio Optimization (SPO).
@@ -50,8 +62,8 @@ class RLEvaluator:
 
         if verbose > 0:
             print('\nPortfolio Allocation (SPO):')
-            for i in range(len(tickers)):
-                print(f'{tickers[i]:<10} {(portfolio_allocation[i]*100):.2f} %')
+            for i in range(len(self.tickers)):
+                print(f'{self.tickers[i]:<10} {(portfolio_allocation[i]*100):.2f} %')
             print(f'\nProfit p.a. (SPO): {avg_profit_pa*100:.4f} %')
             print(f'Sharpe Ratio (SPO): {sharpe:.4f}\n')
 

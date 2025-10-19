@@ -94,8 +94,9 @@ class DDPG:
 
         # set data-related hyperparameters
         self.number_of_assets = dataloader.number_of_assets
-        number_of_datapoints = self.lookback_window + self.forecast_window
-        self.input_size = self.number_of_assets * number_of_datapoints
+        #number_of_datapoints = self.lookback_window + self.forecast_window
+        #self.input_size = self.number_of_assets * number_of_datapoints
+        self.input_size = self.number_of_assets * self.lookback_window
         self.output_size = self.number_of_assets
 
         # build dataloaders
