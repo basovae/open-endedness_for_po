@@ -6,6 +6,8 @@ import torch.nn as nn
 from copy import deepcopy
 from early_stopper import EarlyStopper
 from replay_buffer import ReplayBuffer
+from qd.wrappers import NSWrapper # Novelty Search
+from qd.bd_presets import bd_weights_plus_returns # Novelty Search
 
 class DDPGTrainer:
     '''Facilitates the training of a DDPG pipeline for financial portfolio
@@ -69,6 +71,9 @@ class DDPGTrainer:
         early_stopping: bool = True,
         patience: int = 2,
         min_delta: float = 0,
+        use_ns: bool = False,
+        ns_alpha: float = 1.0,
+        ns_beta: float = 0.5,
     ):
         self.number_of_assets = number_of_assets
         self.actor = actor
@@ -99,6 +104,13 @@ class DDPGTrainer:
             # Synchronize target networks with main networks
             self._soft_update(self.target_actor, self.actor, tau=1.0)
             self._soft_update(self.target_critic, self.critic, tau=1.0)
+        
+        ## -- NS --
+        self.use_ns = use_ns
+        self.ns = NSWrapper(bd_fn=bd_weights_plus_returns,
+                    alpha=ns_alpha,
+                    beta=ns_beta) if use_ns else None
+
 
     def _soft_update(self, target, source, tau):
         '''Soft-update target network parameters.'''
@@ -133,6 +145,10 @@ class DDPGTrainer:
         for epoch in range(num_epochs):
             total_actor_loss = 0
             total_critic_loss = 0
+            episode_task_return = 0.0           # <-- track per-epoch reward for NS
+            
+            if self.use_ns:
+                self.ns.reset_episode_buffers()  # <-- NS: start new episode buffers
 
             for state, next_state in train_loader:
 
@@ -152,6 +168,20 @@ class DDPGTrainer:
                     correction=0, # maximum likelihood estimation
                 ).detach().cpu()
                 reward = avg_profit + self.risk_preference * volatility
+                
+                # ---- NS step hook ----
+                if self.use_ns:
+                    info = {
+                        "weights": noisy_portfolio_allocation.detach().cpu().numpy().ravel(),
+                        "return_t": float(reward)
+                    }
+                    # state/action can be None; wrapper only needs weights/return_t
+                    self.ns.on_step(state=None,
+                                    action=noisy_portfolio_allocation.detach().cpu().numpy().ravel(),
+                                    reward_task=float(reward),
+                                    info=info)
+                # accumulate episode score for the epoch
+                episode_task_return += float(reward)
 
                 # Store transition in replay buffer
                 replay_buffer.push((
@@ -258,6 +288,14 @@ class DDPGTrainer:
 
                 if verbose > 0:
                     print(f'Epoch {epoch+1}/{num_epochs}, Actor Loss: {avg_actor_loss:.10f}, Critic Loss: {avg_critic_loss:.10f}, Val Critic Loss: {avg_val_critic_loss:.10f}')
+
+                # ---- NS episode-end hook ----
+                if self.use_ns:
+                    blended = self.ns.on_episode_end(episode_task_return)
+                    if verbose > 0:
+                        print(f"NS blended score (epoch {epoch+1}): {blended:.6f} | "
+                              f"task_return: {episode_task_return:.6f}")
+
 
                 if self.early_stopper.early_stop(avg_val_critic_loss, verbose=verbose):
                         break

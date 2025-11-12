@@ -38,7 +38,10 @@ model.train(
     val_data=val_df,
     actor_lr=1e-3,
     critic_lr=1e-3,
-    num_epochs=5,                      # small smoke test
+    num_epochs=5,    
+    use_ns=True, 
+    ns_alpha=1.0, 
+    ns_beta=0.5
 )
 
 # 4) Evaluate

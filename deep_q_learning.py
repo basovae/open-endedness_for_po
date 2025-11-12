@@ -37,6 +37,7 @@ class DeepQLearning:
         verbose: int = 1,
         seed: int = 42,
         **kwargs,
+
     ):
         self.lookback_window = lookback_window
         self.batch_size = batch_size
@@ -67,6 +68,11 @@ class DeepQLearning:
         patience: int = 2,
         min_delta: float = 0,
         num_action_samples: int = 10,
+        # NS
+        use_ns: bool = False,
+        ns_alpha: float = 1.0,
+        ns_beta: float = 0.5,
+
     ):
         '''Trains the Deep Q-Learning model.
 
@@ -149,6 +155,10 @@ class DeepQLearning:
             patience=patience,
             min_delta=min_delta,
             num_action_samples=num_action_samples,
+                     # NS
+            use_ns=use_ns,
+            ns_alpha=ns_alpha,
+            ns_beta=ns_beta,
         )
         trainer.train(
             train_loader=train_loader,

@@ -66,6 +66,9 @@ class DDPG:
         early_stopping: bool = True,
         patience: int = 2,
         min_delta: float = 0,
+        use_ns: bool = False,
+        ns_alpha: float = 1.0,
+        ns_beta: float = 0.5,
     ):
         '''Trains the DDPG model.
 
@@ -143,6 +146,10 @@ class DDPG:
             early_stopping=early_stopping,
             patience=patience,
             min_delta=min_delta,
+            # NS
+            use_ns=use_ns,
+            ns_alpha=ns_alpha,
+            ns_beta=ns_beta,
         )
         trainer.train(
             train_loader=train_loader,

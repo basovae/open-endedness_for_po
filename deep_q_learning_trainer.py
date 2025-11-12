@@ -6,6 +6,9 @@ import torch.nn as nn
 from copy import deepcopy
 from early_stopper import EarlyStopper
 from replay_buffer import ReplayBuffer
+from qd.wrappers import NSWrapper # Novelty Search
+from qd.bd_presets import bd_weights_plus_returns # Novelty Search
+
 
 
 class DeepQLearningTrainer:
@@ -71,6 +74,10 @@ class DeepQLearningTrainer:
         patience: int = 2,
         min_delta: float = 0,
         num_action_samples: int = 10,
+        use_ns: bool = False,
+        ns_alpha: float = 1.0,
+        ns_beta: float = 0.5,
+
     ):
         self.number_of_assets = number_of_assets
         self.actor = actor
@@ -85,6 +92,12 @@ class DeepQLearningTrainer:
         self.early_stopper = EarlyStopper(patience, min_delta) if early_stopping else None
         self.num_action_samples = num_action_samples
         self._soft_update(self.target_critic, self.critic, tau=1.0) ## added
+        # ---- Novelty Search wiring ----
+        self.use_ns = use_ns
+        self.ns = NSWrapper(bd_fn=bd_weights_plus_returns,
+                    alpha=ns_alpha,
+                    beta=ns_beta) if use_ns else None
+
 
         # Optimizers
         self.actor_optimizer = optimizer(
@@ -103,6 +116,15 @@ class DeepQLearningTrainer:
             self.target_critic = deepcopy(critic)
             # Synchronize target critic with main critic network
             self._soft_update(self.target_critic, self.critic, tau=1.0)
+        
+        # --- Novelty Search wiring ---
+        self.use_ns = use_ns
+        self.ns = NSWrapper(
+            bd_fn=bd_weights_plus_returns,
+            alpha=ns_alpha,
+            beta=ns_beta
+        ) if use_ns else None
+
 
     def _soft_update(self, target, source, tau):
         '''Soft-update target network parameters.'''
@@ -143,6 +165,10 @@ class DeepQLearningTrainer:
         for epoch in range(num_epochs):
             total_actor_loss = 0
             total_critic_loss = 0
+            episode_task_return = 0.0           # <-- track per-epoch reward for NS
+            
+            if self.use_ns:
+                self.ns.reset_episode_buffers()  # <-- NS: start new episode buffers
 
             for state, next_state in train_loader:
 
@@ -164,6 +190,21 @@ class DeepQLearningTrainer:
                     correction=0, # maximum likelihood estimation
                 ).detach().cpu()
                 reward = avg_profit + self.risk_preference * volatility
+
+                # ---- NS step hook ----
+                if self.use_ns:
+                    info = {
+                        "weights": noisy_portfolio_allocation.detach().cpu().numpy().ravel(),
+                        "return_t": float(reward)
+                    }
+                    # state/action can be None; wrapper only needs weights/return_t
+                    self.ns.on_step(state=None,
+                                    action=noisy_portfolio_allocation.detach().cpu().numpy().ravel(),
+                                    reward_task=float(reward),
+                                    info=info)
+                # accumulate episode score for the epoch
+                episode_task_return += float(reward)
+
 
                 # Store transition in replay buffer
                 replay_buffer.push((
@@ -284,6 +325,13 @@ class DeepQLearningTrainer:
                           f'Val Critic Loss org: {avg_val_critic_loss:.10f}'
                           f"Val Critic Loss: {float(avg_val_critic_loss):.6f}"
                           )
+                
+                # ---- NS episode-end hook ----
+                if self.use_ns:
+                    blended = self.ns.on_episode_end(episode_task_return)
+                    if verbose > 0:
+                        print(f"NS blended score (epoch {epoch+1}): {blended:.6f} | "
+                              f"task_return: {episode_task_return:.6f}")
 
                 if self.early_stopper.early_stop(avg_val_critic_loss, verbose=verbose):
                         break
