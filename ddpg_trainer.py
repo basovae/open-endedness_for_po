@@ -1,3 +1,5 @@
+from math import tau
+from statistics import correlation
 from rl_evaluator import RLEvaluator
 from rl_dataloader import RLDataLoader
 import pandas as pd
@@ -75,17 +77,27 @@ class DDPGTrainer:
         ns_alpha: float = 1.0,
         ns_beta: float = 0.5,
     ):
-        self.number_of_assets = number_of_assets
-        self.actor = actor
-        self.critic = critic
-        self.l1_lambda = l1_lambda
-        self.l2_lambda = l2_lambda
-        self.soft_update = soft_update
-        self.tau = tau
-        self.risk_preference = risk_preference
-        self.gamma = gamma
+
+        self.number_of_assets = number_of_assets      # Number of stocks in portfolio
+        self.actor = actor                            # Policy network (decision maker)
+        self.critic = critic                          # Value network (evaluator)
+    
+        # Regularization parameters
+        self.l1_lambda = l1_lambda                    # L1 penalty for sparsity
+        self.l2_lambda = l2_lambda                    # L2 penalty for weight decay
+    
+        # Target network parameters
+        self.soft_update = soft_update                # Use target networks?
+        self.tau = tau                                # Soft update rate (typically 0.001-0.01)
+    
+        # Reward function parameters
+        self.risk_preference = risk_preference        # Negative = risk-averse (penalize volatility)
+        self.gamma = gamma                            # Discount factor for future rewards
+    
+        # Early stopping to prevent overfitting
         self.early_stopper = EarlyStopper(patience, min_delta) if early_stopping else None
 
+        # optimizers for Actor and Critic
         self.actor_optimizer = optimizer(
             actor.parameters(),
             lr=actor_lr,
@@ -99,9 +111,11 @@ class DDPGTrainer:
     
         if soft_update:
             # Initialize update factor and target networks
+            # Create frozen copies of networks for stable training
             self.target_actor = deepcopy(actor)
             self.target_critic = deepcopy(critic)
             # Synchronize target networks with main networks
+            # Initialize target networks to match main networks (tau=1.0 means complete copy)
             self._soft_update(self.target_actor, self.actor, tau=1.0)
             self._soft_update(self.target_critic, self.critic, tau=1.0)
         
@@ -114,7 +128,9 @@ class DDPGTrainer:
 
     def _soft_update(self, target, source, tau):
         '''Soft-update target network parameters.'''
+        '''Polyak averaging: slowly blend target toward source'''
         for target_param, source_param in zip(target.parameters(), source.parameters()):
+            # target = (1-τ)×target + τ×source
             target_param.data.copy_((1.0 - tau) * target_param.data + tau * source_param.data)
 
     def train(
@@ -150,25 +166,45 @@ class DDPGTrainer:
             if self.use_ns:
                 self.ns.reset_episode_buffers()  # <-- NS: start new episode buffers
 
+            # batch loop starts here
             for state, next_state in train_loader:
+                # state: Current market window (e.g., last 10 days of returns)
+                # state: Current market window (tensor of shape [batch_size, window_size, num_assets])
+                # next_state: Next market window (shifted by 1 day)
 
+
+                # ========== ACTION SELECTION ==========
+                # Actor predicts portfolio allocation based on current state
                 # Compute current portfolio allocation and Q-value
                 portfolio_allocation = self.actor(state.flatten())
+                # Add exploration noise (encourage trying different allocations)
                 exploration_noise = torch.normal(0, noise, portfolio_allocation.shape)
                 noisy_portfolio_allocation = portfolio_allocation + exploration_noise
 
+
+
+                # ========== REWARD COMPUTATION ==========
+                # Calculate average profit from the portfolio allocation
                 # Set target value = average profit + risk preference * volatility
                 avg_profit = torch.mean(
                     torch.sum(state.view(-1, self.number_of_assets) * noisy_portfolio_allocation,
                               dim=-1)
                 ).detach().cpu()
+                # Calculate volatility (risk) of the portfolio
                 volatility = torch.std(
                     torch.sum(state.view(-1, self.number_of_assets) * noisy_portfolio_allocation,
                               dim=-1),
                     correction=0, # maximum likelihood estimation
                 ).detach().cpu()
+                # Reward = Profit - Risk Penalty
                 reward = avg_profit + self.risk_preference * volatility
-                
+                # avg_profit: Mean return of the portfolio over the window
+                # volatility: Standard deviation of returns (risk measure)
+                # risk_preference < 0: Penalize high volatility (risk-averse investor)
+                # Example: If risk_preference = -0.5, a portfolio with 10% return and 2% volatility gets 
+                # reward = 0.10 - 0.5×0.02 = 0.09
+
+               
                 # ---- NS step hook ----
                 if self.use_ns:
                     info = {
@@ -183,13 +219,22 @@ class DDPGTrainer:
                 # accumulate episode score for the epoch
                 episode_task_return += float(reward)
 
-                # Store transition in replay buffer
+
+
+
+
+
+                # ========== EXPERIENCE REPLAY ==========
+                # Store the transition (experience) in replay buffer for later learning
                 replay_buffer.push((
                     state.detach(),
                     noisy_portfolio_allocation.detach(),
                     reward.detach(),
                     next_state.detach()))
 
+                # Consecutive experiences are highly correlated (tomorrow's prices depend on today's)
+                # Random sampling breaks correlation → more stable learning
+                # Re-use past experiences → sample efficiency
                 # Sample transition from replay buffer
                 transition = replay_buffer.sample(1)
                 state = transition[0][0]
@@ -197,17 +242,27 @@ class DDPGTrainer:
                 reward = transition[0][2]
                 next_state = transition[0][3]
 
+
+
+
+
+
+                # ========== CRITIC UPDATE - PART 1: COMPUTE TARGET ==========
+                # Get the clean action (without noise) for the current state
                 portfolio_allocation = self.actor(state.flatten())
+
 
                 # Use target networks for next state action and Q-value if soft
                 # updates are enabled, else use regular ones
                 if self.soft_update:
+                    # Use TARGET networks for stable Q-value estimation
                     next_portfolio_allocation = self.target_actor(next_state.flatten())
                     next_q_value = self.target_critic(
                         torch.cat((next_state.flatten(),
                                 next_portfolio_allocation.flatten()))
                     )
                 else:
+                    # Use MAIN networks (less stable but simpler)
                     next_portfolio_allocation = self.actor(next_state.flatten())
                     next_q_value = self.critic(
                         torch.cat((next_state.flatten(),
@@ -215,29 +270,61 @@ class DDPGTrainer:
                     )
 
                 # Calculate target Q-value according to update function
+                # Intuition: 
+                # "The value of today's action equals today's reward plus the discounted value of tomorrow's best action"
+                # Bellman equation: Q(s,a) = r + γ × Q(s',a')
+                # Q(s,a): Expected total reward for taking action a in state s
+                # reward: Immediate reward received
+                # gamma × Q(s',a'): Discounted future reward from next state
                 target_q_value = reward + self.gamma * next_q_value
 
-                # Critic loss and backpropagation
+
+
+
+
+
+                # ========== CRITIC UPDATE - PART 2: MINIMIZE TD ERROR ==========
+                # Compute current Q-value estimate using the NOISY action
+                # Critic predicts Q-value for the state-action pair
                 q_value = self.critic(
                     torch.cat((state.flatten(),
                                noisy_portfolio_allocation.flatten()))
                 )
+
+                # Temporal Difference (TD) Error: difference between target and prediction
                 critic_loss = (target_q_value - q_value).pow(2)
+
+                # Backpropagation: Update Critic to minimize TD error
+                # Minimize squared error → Critic learns to estimate rewards accurately
                 self.critic_optimizer.zero_grad()
-                critic_loss.backward(retain_graph=True)
+                critic_loss.backward(retain_graph=True) # retain_graph=True needed for Actor update
                 self.critic_optimizer.step()
 
-                # Actor evaluation
+
+
+
+
+
+                # ========== ACTOR UPDATE: MAXIMIZE Q-VALUE ==========
+                # Goal: Actor should choose actions that the Critic thinks are valuable
+                # Loss: -Q(s, a) means maximizing Q-value
+                # Gradient flow: ∂(-Q)/∂θ_actor = -∂Q/∂a × ∂a/∂θ_actor
+                # Change Actor parameters to produce actions that increase Q-value
+                # This is the "deterministic policy gradient"
+               
+                # Compute Q-value using CLEAN action (no noise)
                 critic_input = torch.cat(
                     (state.flatten(), portfolio_allocation.flatten()))
-                actor_loss = -self.critic(critic_input)
+                actor_loss = -self.critic(critic_input) # Negative because we want to MAXIMIZE Q
 
-                # Add L1/L2 regularization to actor loss
+                # Add L1/L2 regularization penalties to actor loss
+                # L1 penalty: Encourages sparse portfolios (few non-zero weights)                
                 l1_actor = sum(weight.abs().sum() for weight in self.actor.parameters())
+                # L2 penalty: Prevents extreme weight values
                 l2_actor = sum(weight.pow(2).sum() for weight in self.actor.parameters())
                 actor_loss += self.l1_lambda * l1_actor + self.l2_lambda * l2_actor
 
-                # Actor backpropagation
+                # Actor Backpropagation: Update Actor to choose actions that maximize Q-values
                 self.actor_optimizer.zero_grad()
                 actor_loss.backward()
                 self.actor_optimizer.step()
@@ -245,20 +332,34 @@ class DDPGTrainer:
                 total_actor_loss += actor_loss.item()
                 total_critic_loss += critic_loss.item()
 
-            # Average losses
+            # ← BATCH LOOP ENDS HERE
+
+            
+            
+
+            # ========== AFTER ALL BATCHES ARE PROCESSED ==========
+            # Why at the end of each epoch? Target networks should change slowly (stability)
+            # Updating after every batch would be too frequent
+
+            # First, accumulate losses from all batches
             avg_actor_loss = total_actor_loss / len(train_loader)
             avg_critic_loss = total_critic_loss / len(train_loader)
 
-            # Early stopping
+
+            # Then do validation (if early stopping is enabled)
+            # ========== VALIDATION PHASE ==========
             if self.early_stopper:
-                with torch.no_grad():
+                with torch.no_grad():  # No gradient computation during validation
                     val_critic_loss = 0
+
                     for state, next_state in val_loader:
+                        # Compute validation loss same way as training
                         portfolio_allocation = self.actor(state.flatten())
                         q_value = self.critic(
                             torch.cat((state.flatten(), portfolio_allocation.flatten()))
                         )
 
+                        # Use target networks if enabled
                         if self.soft_update:
                             next_portfolio_allocation = self.target_actor(next_state.flatten())
                             next_q_value = self.target_critic(
@@ -270,6 +371,7 @@ class DDPGTrainer:
                                 torch.cat((next_state.flatten(), next_portfolio_allocation.flatten()))
                             )
 
+                        # Calculate reward on validation data
                         avg_profit = torch.mean(
                             torch.sum(state.view(-1, self.number_of_assets) * portfolio_allocation,
                                     dim=-1)
@@ -282,11 +384,12 @@ class DDPGTrainer:
                         reward = avg_profit + self.risk_preference * volatility
 
                         target_q_value = reward + self.gamma * next_q_value
+                        # Accumulate validation TD error
                         val_critic_loss += (target_q_value - q_value).pow(2).item()
 
                     avg_val_critic_loss = val_critic_loss / len(val_loader)
 
-                if verbose > 0:
+                if verbose > 0: 
                     print(f'Epoch {epoch+1}/{num_epochs}, Actor Loss: {avg_actor_loss:.10f}, Critic Loss: {avg_critic_loss:.10f}, Val Critic Loss: {avg_val_critic_loss:.10f}')
 
                 # ---- NS episode-end hook ----
@@ -296,7 +399,7 @@ class DDPGTrainer:
                         print(f"NS blended score (epoch {epoch+1}): {blended:.6f} | "
                               f"task_return: {episode_task_return:.6f}")
 
-
+                # Check if we should stop training
                 if self.early_stopper.early_stop(avg_val_critic_loss, verbose=verbose):
                         break
                 if self.soft_update:
@@ -305,7 +408,8 @@ class DDPGTrainer:
                 if verbose > 0:
                     print(f'Epoch {epoch+1}/{num_epochs}, Actor Loss: {avg_actor_loss:.10f}, Critic Loss: {avg_critic_loss:.10f}')
 
-            # Synchronize target networks
+            # ========== TARGET NETWORK UPDATE ==========
+            # Synchronize target networks 
             if self.soft_update:
                 self._soft_update(self.target_actor, self.actor, self.tau)
                 self._soft_update(self.target_critic, self.critic, self.tau)

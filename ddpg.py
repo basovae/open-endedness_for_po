@@ -110,20 +110,33 @@ class DDPG:
         )
 
         # initialize models
+
+        ### Purpose: The Actor decides HOW to allocate portfolio weights given market state.
+        ### Input: Historical returns (e.g., 10 days × 5 stocks = 50 dimensions)
+        ### Output: Portfolio allocation (e.g., [0.2, 0.3, 0.1, 0.3, 0.1] for 5 stocks)
+        # actor network
         if self.short_selling:
+            # if short-selling allowed, normalize weights to sum to 1 (can be negative)
             activation = lambda x: x / torch.sum(x, dim=-1, keepdim=True)
         else:
+            # if no short-selling, use Softmax to ensure positive weights that sum to 1
             activation = nn.Softmax(dim=-1)
+
         self.actor = self.predictor(
-            input_size=self.input_size,
-            output_size=self.output_size,
-            output_activation=activation,
+            input_size=self.input_size, # number of assets × lookback_window
+            output_size=self.output_size, # number of assets (portfolio weights)
+            output_activation=activation, # ensures valid portfolio allocations
             **self.predictor_kwargs,
             seed=self.seed,
         )
+
+        ### Purpose: The Critic evaluates HOW GOOD a state-action pair is.
+        ### Input: Market state + Portfolio allocation (50 + 5 = 55 dimensions)
+        ### Output: Q-value (expected cumulative reward)
+        # critic network
         critic = self.predictor(
-            input_size=self.input_size + self.output_size,
-            output_size=1,
+            input_size=self.input_size + self.output_size, # state + action
+            output_size=1, # single Q-value output
             **self.predictor_kwargs,
             seed=self.seed,
         )
