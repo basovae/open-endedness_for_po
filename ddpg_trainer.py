@@ -1,3 +1,4 @@
+import numpy as np
 from math import tau
 from statistics import correlation
 from rl_evaluator import RLEvaluator
@@ -315,10 +316,20 @@ class DDPGTrainer:
                 # Compute Q-value using CLEAN action (no noise)
                 critic_input = torch.cat(
                     (state.flatten(), portfolio_allocation.flatten()))
-                #actor_loss = -self.critic(critic_input) # Negative because we want to MAXIMIZE Q
-
-                novelty_bonus = self.ns.archive.novelty(current_behavior_descriptor)
-                actor_loss = -self.critic(critic_input) - self.beta * novelty_bonus
+                actor_loss = -self.critic(critic_input) # Negative because we want to MAXIMIZE Q
+                
+                # Optional: Add novelty bonus to encourage exploration
+                # NOTE: This is experimental - novelty is typically applied at episode level,
+                # not step level. Uncomment if you want step-level novelty pressure.
+                if self.use_ns and len(self.ns.buf["weights_traj"]) > 0:
+                     # Build current behavior descriptor from accumulated trajectory
+                     traj = {
+                         "weights_traj": np.vstack(self.ns.buf["weights_traj"]),
+                         "returns": np.array(self.ns.buf["returns"])
+                     }
+                     current_bd = self.ns.bd_fn(traj)
+                     novelty_bonus = self.ns.archive.novelty(current_bd)
+                     actor_loss = actor_loss - self.ns.beta * novelty_bonus
 
                 # Add L1/L2 regularization penalties to actor loss
                 # L1 penalty: Encourages sparse portfolios (few non-zero weights)                
