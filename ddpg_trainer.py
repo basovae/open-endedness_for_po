@@ -315,7 +315,10 @@ class DDPGTrainer:
                 # Compute Q-value using CLEAN action (no noise)
                 critic_input = torch.cat(
                     (state.flatten(), portfolio_allocation.flatten()))
-                actor_loss = -self.critic(critic_input) # Negative because we want to MAXIMIZE Q
+                #actor_loss = -self.critic(critic_input) # Negative because we want to MAXIMIZE Q
+
+                novelty_bonus = self.ns.archive.novelty(current_behavior_descriptor)
+                actor_loss = -self.critic(critic_input) - self.beta * novelty_bonus
 
                 # Add L1/L2 regularization penalties to actor loss
                 # L1 penalty: Encourages sparse portfolios (few non-zero weights)                
