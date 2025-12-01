@@ -2,15 +2,20 @@
 import numpy as np
 from .novelty_metrics import bd_weights_hist, bd_returns_shape, concat
 
-def bd_weights_plus_returns(traj) -> np.ndarray:
+def bd_for_map_elites(traj) -> np.ndarray:
     """
-    traj: dict filled by NSWrapper:
-      - traj["weights_traj"]: (T, n_assets)
-      - traj["returns"]: (T,)
+    Returns 2D descriptor:
+      [0]: Portfolio concentration (Herfindahl index of mean weights)
+      [1]: Realized volatility of portfolio returns
     """
-    if "weights_traj" not in traj or traj["weights_traj"].size == 0:
-        # fallback: use returns only
-        return bd_returns_shape(np.asarray(traj.get("returns", []), dtype=float))
-    W = np.asarray(traj["weights_traj"], dtype=float)
-    R = np.asarray(traj.get("returns", []), dtype=float)
-    return concat(bd_weights_hist(W, bins=5), bd_returns_shape(R, segments=10))
+    weights = np.asarray(traj["weights_traj"], dtype=float)
+    returns = np.asarray(traj["returns"], dtype=float)
+    
+    # Concentration: HHI of average weights (0 = diversified, 1 = concentrated)
+    mean_weights = np.mean(weights, axis=0)
+    hhi = np.sum(mean_weights ** 2)
+    
+    # Volatility
+    vol = np.std(returns) if len(returns) > 1 else 0.0
+    
+    return np.array([hhi, vol], dtype=float)
