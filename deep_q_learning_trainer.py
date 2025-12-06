@@ -93,12 +93,13 @@ class DeepQLearningTrainer:
         self.gamma = gamma
         self.early_stopper = EarlyStopper(patience, min_delta) if early_stopping else None
         self.num_action_samples = num_action_samples
-        self._soft_update(self.target_critic, self.critic, tau=1.0) ## added
+        self._soft_update(self.target_critic, self.critic, tau=1.0)
+
         # ---- Novelty Search wiring ----
         self.use_ns = use_ns
-        #self.ns = NSWrapper(bd_fn=bd_weights_plus_returns,
-         #           alpha=ns_alpha,
-         #           beta=ns_beta) if use_ns else None
+        # self.ns = NSWrapper(bd_fn=bd_weights_plus_returns,
+        #           alpha=ns_alpha,
+        #           beta=ns_beta) if use_ns else None
         self.ns = create_ns_wrapper(
             bd_fn=bd_weights_plus_returns,
             alpha=ns_alpha,
@@ -125,13 +126,7 @@ class DeepQLearningTrainer:
             # Synchronize target critic with main critic network
             self._soft_update(self.target_critic, self.critic, tau=1.0)
         
-        # --- Novelty Search wiring ---
-        self.use_ns = use_ns
-        self.ns = NSWrapper(
-            bd_fn=bd_weights_plus_returns,
-            alpha=ns_alpha,
-            beta=ns_beta
-        ) if use_ns else None
+        
 
 
     def _soft_update(self, target, source, tau):
