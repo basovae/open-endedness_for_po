@@ -125,8 +125,8 @@ class RLEvaluator:
 
             if verbose > 1:
                 print(f'\nPeriod {i+1} Portfolio Allocations:')
-                for i in range(len(tickers)):
-                    print(f'{tickers[i]:<10} {(portfolio_allocation[i]*100):.2f} %')
+                for i in range(len(self.tickers)):
+                    print(f'{self.tickers[i]:<10} {(portfolio_allocation[i]*100):.2f} %')
  
             # Get daily returns based on rolling test dataset
             daily_portfolio_returns = np.sum(rolling_test_data.values * portfolio_allocation, axis=1)

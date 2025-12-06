@@ -8,6 +8,8 @@ from early_stopper import EarlyStopper
 from replay_buffer import ReplayBuffer
 from qd.wrappers import NSWrapper # Novelty Search
 from qd.bd_presets import bd_weights_plus_returns # Novelty Search
+from qd.wrappers import create_ns_wrapper  # Updated import
+from qd.bd_presets import bd_weights_plus_returns
 
 
 
@@ -94,9 +96,15 @@ class DeepQLearningTrainer:
         self._soft_update(self.target_critic, self.critic, tau=1.0) ## added
         # ---- Novelty Search wiring ----
         self.use_ns = use_ns
-        self.ns = NSWrapper(bd_fn=bd_weights_plus_returns,
-                    alpha=ns_alpha,
-                    beta=ns_beta) if use_ns else None
+        #self.ns = NSWrapper(bd_fn=bd_weights_plus_returns,
+         #           alpha=ns_alpha,
+         #           beta=ns_beta) if use_ns else None
+        self.ns = create_ns_wrapper(
+            bd_fn=bd_weights_plus_returns,
+            alpha=ns_alpha,
+            beta=ns_beta,
+            normalized=True  # Use normalized version
+            ) if use_ns else None
 
 
         # Optimizers

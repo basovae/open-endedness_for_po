@@ -37,6 +37,9 @@ try:
 except ImportError:
     HAS_NORMALIZED_NS = False
 
+from qd.wrappers import create_ns_wrapper
+from qd.bd_presets import bd_weights_plus_returns
+
 
 # ==============================================================================
 # [CHANGE 4] Training Diagnostics Class
@@ -264,26 +267,13 @@ class DDPGTrainer:
         
         # === [CHANGE 5] Novelty Search with normalization ===
         self.use_ns = use_ns
-        if use_ns:
-            if use_normalized_ns and HAS_NORMALIZED_NS:
-                # [NEW] Use normalized wrapper
-                self.ns = NSWrapperNormalized(
-                    bd_fn=bd_weights_plus_returns,
-                    alpha=ns_alpha,
-                    beta=ns_beta,
-                    warmup_episodes=10,
-                )
-                print("[NS] Using NORMALIZED wrapper (recommended)")
-            else:
-                # Fallback to original
-                self.ns = NSWrapper(
-                    bd_fn=bd_weights_plus_returns,
-                    alpha=ns_alpha,
-                    beta=ns_beta,
-                )
-                print("[NS] Using original wrapper")
-        else:
-            self.ns = None
+        self.ns = create_ns_wrapper(
+            bd_fn=bd_weights_plus_returns,
+            alpha=ns_alpha,
+            beta=ns_beta,
+            normalized=True,
+            warmup_episodes=10
+        ) if use_ns else None
         
         # === [CHANGE 4] Diagnostics ===
         self.track_diagnostics = track_diagnostics
