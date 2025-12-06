@@ -414,6 +414,12 @@ class DDPGTrainer:
                 )
                 actor_loss = -q_value_for_actor
 
+                # Entropy regularization to encourage diversification
+                entropy_coef = 0.01  # Tune this
+                weights_for_entropy = portfolio_allocation + 1e-8  # Avoid log(0)
+                entropy = -torch.sum(weights_for_entropy * torch.log(weights_for_entropy))
+                actor_loss = actor_loss - entropy_coef * entropy  # Maximize entropy
+
                 # Regularization
                 if self.l1_lambda > 0:
                     l1_reg = sum(p.abs().sum() for p in self.actor.parameters())

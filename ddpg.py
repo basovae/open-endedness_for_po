@@ -64,7 +64,7 @@ class DDPG:
         gamma: float = 1.0,
         num_epochs: int = 50,
         early_stopping: bool = True,
-        patience: int = 2,
+        patience: int = 5,
         min_delta: float = 0,
         use_ns: bool = False,
         ns_alpha: float = 1.0,

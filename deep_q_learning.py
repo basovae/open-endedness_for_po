@@ -65,7 +65,7 @@ class DeepQLearning:
         gamma: float = 0.99,
         num_epochs: int = 50,
         early_stopping: bool = True,
-        patience: int = 2,
+        patience: int = 5,
         min_delta: float = 0,
         num_action_samples: int = 10,
         # NS

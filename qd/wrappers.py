@@ -112,7 +112,7 @@ class NSWrapperNormalized(NSWrapper):
         alpha: float = 0.5,                    # [CHANGED] Was 1.0
         beta: float = 0.5,                     # [CHANGED] Was 1.0  
         archive: Optional[NoveltyArchive] = None,
-        warmup_episodes: int = 10,             # [NEW] Warmup before normalization
+        warmup_episodes: int = 20,             # [NEW] Warmup before normalization
         use_running_stats: bool = True,        # [NEW] Use EMA for efficiency
         ema_decay: float = 0.99,               # [NEW] EMA decay factor
     ):

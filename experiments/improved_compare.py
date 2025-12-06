@@ -48,7 +48,11 @@ def calculate_metrics(returns: np.ndarray) -> Dict[str, float]:
     
     # Sortino
     neg_returns = returns[returns < 0]
-    downside_vol = np.std(neg_returns) * np.sqrt(252) if len(neg_returns) > 0 else 1e-8
+    if len(neg_returns) > 1:
+      downside_vol = np.std(neg_returns) * np.sqrt(252)
+      downside_vol = max(downside_vol, 0.01)  # Floor at 1% to avoid explosion
+    else:
+      downside_vol = annual_vol  # Fallback to standard vol
     sortino = annual_return / downside_vol
     
     return {
@@ -277,12 +281,12 @@ def main():
         'num_epochs': 15,
         'risk_preference': -0.5,        # Standard risk penalty
         'risk_preference_ns': -1.0,     # HIGHER penalty for NS to control vol
-        'ns_alpha': 1.0,
+        'ns_alpha': 0.7,
         'ns_beta': 0.3,                 # Lower beta = less novelty pressure
     }
     
     lookback = 50
-    n_runs = 5
+    n_runs = 20
     
     print(f"\nRunning {n_runs} experiments...")
     print(f"Config: risk_pref={config['risk_preference']}, "
