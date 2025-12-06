@@ -1,8 +1,16 @@
 # run_dql_example.py
+
+import sys
+import os
+
+# Add project root to path so we can import modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import pandas as pd
 import torch.nn as nn
 from deep_q_learning import DeepQLearning
 import predictors
+
 
 # 1) Load local data
 df = pd.read_csv("multiasset_daily_returns.csv", index_col=0, parse_dates=True).sort_index()
