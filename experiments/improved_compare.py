@@ -29,6 +29,9 @@ warnings.filterwarnings('ignore')
 import predictors
 from deep_q_learning import DeepQLearning
 from ddpg import DDPG
+from qd.map_elites import MAPElitesArchive
+from qd.me_trainer import MAPElitesTrainer
+from qd.bd_presets import bd_for_map_elites
 
 
 # =============================================================================
@@ -108,12 +111,62 @@ class EnsembleStrategy:
     def __init__(self, strategies: List, weights: List[float] = None):
         self.strategies = strategies
         self.weights = weights or [1/len(strategies)] * len(strategies)
-    
+
     def __call__(self, state):
         portfolio = np.zeros_like(self.strategies[0](state))
         for strategy, weight in zip(self.strategies, self.weights):
             portfolio += weight * strategy(state)
         return portfolio / np.sum(portfolio)
+
+
+class MAPElitesStrategy:
+    """Strategy wrapper for MAP-Elites best policy."""
+    def __init__(self, policy):
+        self.policy = policy
+        self.policy.eval()
+
+    def __call__(self, state):
+        with torch.no_grad():
+            weights = self.policy(torch.tensor(state, dtype=torch.float32)).numpy()
+        return weights
+
+
+def run_map_elites(train_data, val_data, n_assets, lookback, config, seed):
+    """Run MAP-Elites and return best policy."""
+    input_size = lookback * n_assets
+
+    def policy_factory():
+        return nn.Sequential(
+            nn.Linear(input_size, config['hidden_sizes'][0]),
+            nn.ReLU(),
+            nn.Linear(config['hidden_sizes'][0], config['hidden_sizes'][1]),
+            nn.ReLU(),
+            nn.Linear(config['hidden_sizes'][1], n_assets),
+            nn.Softmax(dim=-1)
+        )
+
+    def evaluator(policy):
+        policy.eval()
+        returns, weights_history = [], []
+        with torch.no_grad():
+            for t in range(lookback, len(val_data)):
+                state = torch.tensor(val_data.iloc[t-lookback:t].values.flatten(), dtype=torch.float32)
+                weights = policy(state).numpy()
+                weights_history.append(weights)
+                returns.append(np.dot(weights, val_data.iloc[t].values))
+        returns = np.array(returns)
+        sharpe = np.mean(returns) / (np.std(returns) + 1e-8) * np.sqrt(252)
+        bd = bd_for_map_elites({"weights_traj": np.array(weights_history), "returns": returns})
+        return sharpe, bd
+
+    archive = MAPElitesArchive(dims=(20, 20), bd_bounds=((0.0, 1.0), (0.0, 0.05)), seed=seed)
+    trainer = MAPElitesTrainer(policy_factory=policy_factory, archive=archive,
+                                evaluator=evaluator, mutation_sigma=0.1, seed=seed)
+    trainer.initialize(n_random=50)
+    for _ in range(config.get('me_iterations', 500)):
+        trainer.step()
+    print(f"    MAP-Elites: coverage={archive.coverage():.1%}, QD={archive.qd_score():.1f}")
+    return trainer.get_best_policy()
 
 
 # =============================================================================
@@ -249,7 +302,14 @@ def run_experiment(
     returns, weights = backtest(strategy, test_data, lookback)
     results['DDPG + NS'] = calculate_metrics(returns)
     results['DDPG + NS']['weights_std'] = np.mean(np.std(weights, axis=0))
-    
+
+    # 6. MAP-Elites
+    me_policy = run_map_elites(train_data, val_data, n_assets, lookback, config, seed)
+    strategy = MAPElitesStrategy(me_policy)
+    returns, weights = backtest(strategy, test_data, lookback)
+    results['MAP-Elites'] = calculate_metrics(returns)
+    results['MAP-Elites']['weights_std'] = np.mean(np.std(weights, axis=0))
+
     return results
 
 
@@ -283,6 +343,7 @@ def main():
         'risk_preference_ns': -1.0,     # HIGHER penalty for NS to control vol
         'ns_alpha': 0.7,
         'ns_beta': 0.3,                 # Lower beta = less novelty pressure
+        'me_iterations': 500,           # MAP-Elites iterations
     }
     
     lookback = 50
@@ -294,8 +355,8 @@ def main():
           f"ns_beta={config['ns_beta']}")
     
     # Run multiple experiments
-    all_results = {strategy: [] for strategy in 
-                   ['Equal Weight', 'DQN', 'DQN + NS', 'DDPG', 'DDPG + NS']}
+    all_results = {strategy: [] for strategy in
+                   ['Equal Weight', 'DQN', 'DQN + NS', 'DDPG', 'DDPG + NS', 'MAP-Elites']}
     
     for run in range(n_runs):
         print(f"\n  Run {run+1}/{n_runs}...")
@@ -353,7 +414,7 @@ def main():
     
     baseline_sharpes = [m['sharpe'] for m in all_results['Equal Weight']]
     
-    for strategy in ['DQN', 'DQN + NS', 'DDPG', 'DDPG + NS']:
+    for strategy in ['DQN', 'DQN + NS', 'DDPG', 'DDPG + NS', 'MAP-Elites']:
         strategy_sharpes = [m['sharpe'] for m in all_results[strategy]]
         
         # Simple t-test approximation
@@ -372,7 +433,7 @@ def main():
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     
     strategies = list(all_results.keys())
-    colors = ['#3498db', '#e74c3c', '#2ecc71', '#9b59b6', '#f39c12']
+    colors = ['#3498db', '#e74c3c', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c']
     
     # 1. Sharpe with error bars
     ax1 = axes[0]
